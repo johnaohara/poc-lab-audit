@@ -36,7 +36,7 @@ class LabScriptAudit {
         AeshRuntimeRunner.builder().command(Audit.class).args(args).execute();
     }
 
-    @CommandDefinition(name = "audit", description = "Run Audit on lab scripts")
+    @CommandDefinition(name = "audit", description = "Run Audit on lab script repository")
     public static class Audit implements Command {
 
         private static final Logger logger = Logger.getLogger(Audit.class);
@@ -67,19 +67,19 @@ class LabScriptAudit {
 
         }
 
-        @Option(name = "dir", shortName = 'd', description = "Local git repo directory", required = true)
+        @Option(name = "dir", shortName = 'd', description = "Git repo local directory", required = true)
         private String dir;
 
-        @Option(name = "repo", shortName = 'r', description = "Scripts git repo URL", required = true)
+        @Option(name = "repo", shortName = 'r', description = "Git repo remote URL", required = true)
         private String repoUrl;
 
-        @Option(name = "user", shortName = 'u', description = "Scripts git repo username", required = true)
+        @Option(name = "user", shortName = 'u', description = "Remote git repo username", required = true)
         private String user;
 
-        @Option(name = "pass", shortName = 'p', description = "Scripts git repo password", required = true)
+        @Option(name = "pass", shortName = 'p', description = "Remote git repo password", required = true)
         private String password;
 
-        @Option(name = "output", shortName = 'o', description = "Output type: txt, json", defaultValue = "txt")
+        @Option(name = "format", shortName = 'f', description = "Output format: [txt, json]. Default: txt", defaultValue = "txt")
         private String outputType;
 
         // @Option(name = "config", shortName = 'c', description = "Configuration file
