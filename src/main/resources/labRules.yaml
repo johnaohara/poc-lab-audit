@@ -2,10 +2,10 @@
 #name: qdup
 #path: "qdup.yaml"
 #nest: "qdup"
-#asText: redhat.mw.perf.parse.QdupFactory
+#asText: QdupFactory
 ---
 name: jenkinsfile
 path: "Jenkinsfile"
 nest: "jenkins"
-asText: redhat.mw.perf.parse.JenkinsFileFactory
+asText: JenkinsFileFactory
 ---

@@ -1,13 +1,5 @@
 package redhat.mw.perf;
 
-///usr/bin/env jbang "$0" "$@" ; exit $?
-//DEPS org.aesh:aesh:2.6
-//DEPS org.jboss.logging:jboss-logging:3.4.2.Final
-//DEPS org.eclipse.jgit:org.eclipse.jgit:6.0.0.202111291000-r
-//DEPS com.fasterxml.jackson.core:jackson-databind:2.13.0
-//DEPS io.hyperfoil.tools:parse:0.1.7
-
-import io.hyperfoil.tools.parse.ParseCommand;
 import org.aesh.AeshRuntimeRunner;
 import org.aesh.command.Command;
 import org.aesh.command.CommandDefinition;
@@ -21,13 +13,22 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.jboss.logging.Logger;
+import redhat.mw.perf.audit.AuditItem;
+import redhat.mw.perf.output.JsonOutputPrinter;
+import redhat.mw.perf.output.OutputPrinter;
+import redhat.mw.perf.output.TxtOutputPrinter;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 class LabScriptAudit {
 
@@ -40,12 +41,17 @@ class LabScriptAudit {
 
         private static final Logger logger = Logger.getLogger(Audit.class);
 
-        private static final String RULES_FILE = "labRules.yaml";
-
         private static Git git;
         private static UsernamePasswordCredentialsProvider uProvider;
         private static List<Ref> remoteBranches;
+        private static Path repoDir;
         private static Path outputDir;
+        private static OutputPrinter outputPrinter;
+
+        private static final List<AuditItem> auditItems = new ArrayList<>();
+        private static final Map<String, List<String>> failureMsgs = new ConcurrentHashMap<>();
+
+        private static final ExecutorService executorService = Executors.newWorkStealingPool();
 
         static {
             try {
@@ -56,6 +62,9 @@ class LabScriptAudit {
                 e.printStackTrace();
                 System.exit(1); // TODO:: handle correctly
             }
+
+            auditItems.addAll(Util.loadAuditItems());
+
         }
 
         @Option(name = "dir", shortName = 'd', description = "Local git repo directory", required = true)
@@ -70,25 +79,58 @@ class LabScriptAudit {
         @Option(name = "pass", shortName = 'p', description = "Scripts git repo password", required = true)
         private String password;
 
+        @Option(name = "output", shortName = 'o', description = "Output type: txt, json", defaultValue = "txt")
+        private String outputType;
+
         // @Option(name = "config", shortName = 'c', description = "Configuration file
         // path", required = true)
         // private String configFilePath;
 
         @Override
         public CommandResult execute(CommandInvocation commandInvocation) throws InterruptedException {
+
+            long startTime = System.currentTimeMillis();
+
+            repoDir = Path.of(dir);
+
             initializeGit();
+
+            initializeOutputPrinter();
 
             fetchRemoteBranches();
 
             auditBranches();
 
+            printAuditfailures();
+
+            long duration = System.currentTimeMillis() - startTime;
+
+            logger.infov("Audit took: {0} (s)", (float)duration/1_000);
+            logger.infov("Audit File: {0}", outputPrinter.getOutputFile()) ;
+
             return CommandResult.SUCCESS;
+        }
+
+        private void initializeOutputPrinter() {
+            switch (outputType.toLowerCase()) {
+                case "txt":
+                    outputPrinter = new TxtOutputPrinter(outputDir.resolve("output.txt"));
+                    break;
+                case "json":
+                    outputPrinter = new JsonOutputPrinter(outputDir.resolve("output.json"));
+                    break;
+                default:
+                    throw new RuntimeException("Unknown output type: " + outputType);
+            }
+        }
+
+        private void printAuditfailures() {
+            outputPrinter.printAuditfailures(failureMsgs);
         }
 
         private void auditBranches() {
 
             remoteBranches.forEach(remoteBranch -> {
-                System.out.println(remoteBranch.getName());
                 try {
                     git.checkout().setName(remoteBranch.getName()).call();
                     auditBranch(remoteBranch.getName());
@@ -102,19 +144,24 @@ class LabScriptAudit {
 
         private void auditBranch(String name) {
 
-            URL rulesUrl = LabScriptAudit.class.getClassLoader().getResource(RULES_FILE);
+            CountDownLatch countDownLatch = new CountDownLatch(auditItems.size());
 
-            File qDupFile = new File(dir.concat("/qdup.yaml"));
-            logger.infov("qDup exists: {0}", qDupFile.exists());
-            String[] nameComponents = name.split("/");
+            auditItems.forEach(auditItem -> executorService.submit(() -> {
+                auditItem.audit(git, name, repoDir, outputDir, msg -> {
+                            if (!failureMsgs.containsKey(auditItem.getRuleName())) {
+                                failureMsgs.put(auditItem.getRuleName(), new ArrayList<>());
+                            }
+                            failureMsgs.get(auditItem.getRuleName()).add(msg);
+                        }
+                );
+                countDownLatch.countDown();
+            }));
 
-            String[] args = { "-s", dir, "-d",
-                    outputDir.resolve(nameComponents[nameComponents.length - 1].concat(".out")).toFile().getAbsolutePath(), 
-                    "-r", rulesUrl.getPath()
-                    , "--disableDefault"
-            };
-
-            ParseCommand.main(args);
+            try {
+                countDownLatch.await();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
 
         }
 
@@ -184,17 +231,6 @@ class LabScriptAudit {
             } catch (GitAPIException e) {
                 throw new RuntimeException("Failed to clone repository", e);
             }
-        }
-
-        public static Path createTempPath(String prefix) {
-            try {
-                return Files.createTempDirectory(prefix);
-            } catch (NullPointerException | IllegalArgumentException | UnsupportedOperationException | IOException
-                    | SecurityException exception) {
-                logger.error("Could not create temporary directory");
-                System.exit(1);
-            }
-            return null;
         }
 
     }
