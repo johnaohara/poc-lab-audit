@@ -23,10 +23,14 @@ public class QdupYaml implements AuditItem {
     @Override
     public void audit(Git git, String branch, Path repoPath, Path outputPath, Consumer<String> consumer) {
         File qDupFile = repoPath.resolve("qdup.yaml").toFile();
-        File coreScripts = repoPath.resolve("core-scripts").toFile();
         if (qDupFile.exists()) {
             logger.infov("Auditing qdup for branch: {0}", branch);
             ArrayList<String> args = new ArrayList<>(Arrays.asList("--test", qDupFile.getAbsolutePath()));
+            File coreScripts = repoPath.resolve("core-scripts").toFile();
+            if (coreScripts.exists()) {
+                args.add(coreScripts.getAbsolutePath());
+            }
+            coreScripts = repoPath.resolve("core").toFile();
             if (coreScripts.exists()) {
                 args.add(coreScripts.getAbsolutePath());
             }
