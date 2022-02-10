@@ -11,6 +11,9 @@ import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.Permission;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.function.Consumer;
 
 public class QdupYaml implements AuditItem {
@@ -23,12 +26,16 @@ public class QdupYaml implements AuditItem {
         File coreScripts = repoPath.resolve("core-scripts").toFile();
         if (qDupFile.exists()) {
             logger.infov("Auditing qdup for branch: {0}", branch);
-            String[] args = {"--test", qDupFile.getAbsolutePath(), coreScripts.getAbsolutePath()};
+            ArrayList<String> args = new ArrayList<>(Arrays.asList("--test", qDupFile.getAbsolutePath()));
+            if (coreScripts.exists()) {
+                args.add(coreScripts.getAbsolutePath());
+            }
 
             //Setup env for running qDup in
             SecurityManager securityManager = System.getSecurityManager();
             System.setSecurityManager(new TempSecurityManager());
             PrintStream originalOut = System.out;
+            PrintStream originalErr = System.err;
 
 
             QDup qDup = null;
@@ -37,20 +44,23 @@ public class QdupYaml implements AuditItem {
 
             try (PrintStream tempPrintStream = new PrintStream(baos, true, utf8)) {
                 System.setOut(tempPrintStream);
-                qDup = new QDup(args);
+                System.setErr(tempPrintStream);
+                String[] progArgs = new String[args.size()];
+                args.toArray(progArgs);
+                qDup = new QDup(progArgs);
                 qDup.run();
             } catch (SecurityException e) {
-                String msg = qDup.getRunDebug();
-                if (msg != null) {
-                    consumer.accept(String.format("Branch: %s; QDup Parser validation failed: \n %s ", branch, qDup.getRunDebug()));
-                } else {
-                    System.setOut(originalOut);
-                    logger.error("qDup failed to start correctly");
-                    logger.error("The tail of the terminal output might provide a clue why;");
-                    try {
-                        consumer.accept(String.format("Branch: %s; QDup failed to start correctly cause by: \n %s ", branch, baos.toString(utf8)));
-                    } catch (UnsupportedEncodingException unsupportedEncodingException) {
-                        unsupportedEncodingException.printStackTrace();
+                if( !e.getMessage().equals("0") ) {
+                    String msg = qDup.getRunDebug();
+                    if (msg != null) {
+                        logger.warnv("qDup failed to start correctly, for branch {0} please check audit report for details", branch);
+                        consumer.accept(String.format("Branch: %s; QDup Parser validation failed: \n %s \n\n", branch, msg));
+                    } else {
+                        try {
+                            consumer.accept(String.format("Branch: %s; QDup failed to start correctly caused by: \n %s ", branch, baos.toString(utf8)));
+                        } catch (UnsupportedEncodingException ex) {
+                            //ignore
+                        }
                     }
                 }
             } catch (Throwable e) {
@@ -59,6 +69,7 @@ public class QdupYaml implements AuditItem {
                 //restore SecurityManager
                 System.setSecurityManager(securityManager);
                 System.setOut(originalOut);
+                System.setErr(originalErr);
 
             }
 
@@ -78,7 +89,7 @@ public class QdupYaml implements AuditItem {
     class TempSecurityManager extends SecurityManager {
         @Override
         public void checkExit(int status) {
-            throw new SecurityException(); //do not exit JVM if System.exit() is called
+            throw new SecurityException(String.valueOf(status)); //do not exit JVM if System.exit() is called
         }
 
         @Override
