@@ -6,7 +6,7 @@
 
     <groupId>redhat.mw-perf</groupId>
     <artifactId>lab-audit</artifactId>
-    <version>0.2-SNAPSHOT</version>
+    <version>0.2</version>
 
     <name>lab-audit</name>
 
